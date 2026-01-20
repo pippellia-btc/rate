@@ -4,10 +4,10 @@ A highly-concurrent, in-memory, generic token bucket rate limiter for Go.
 
 ## Features
 
-- **Per-entity rate limiting** — each entity (user, IP, API key, etc.) gets its own token bucket
-- **Thread-safe** — designed for high-concurrency workloads
-- **Generic** — works with any comparable key type
-- **Pluggable refill policies** — use the built-in `FlatRefiller` or implement your own
+- **Per-entity rate limiting**: each entity (user, IP, API key, etc.) gets its own token bucket
+- **Thread-safe**: designed for high-concurrency workloads
+- **Generic**: works with any comparable key type
+- **Pluggable refill policies**: use the built-in `FlatRefiller` or implement your own
 
 ## Installation
 

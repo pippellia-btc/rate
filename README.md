@@ -2,6 +2,9 @@
 
 A highly-concurrent, in-memory, generic token bucket rate limiter for Go.
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/pippellia-btc/rate)](https://goreportcard.com/report/github.com/pippellia-btc/rate)
+[![Go Reference](https://pkg.go.dev/badge/github.com/pippellia-btc/rate.svg)](https://pkg.go.dev/github.com/pippellia-btc/rate)
+
 ## Features
 
 - **Per-entity rate limiting**: each entity (user, IP, API key, etc.) gets its own token bucket

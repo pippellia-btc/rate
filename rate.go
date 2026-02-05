@@ -4,7 +4,6 @@
 package rate
 
 import (
-	"errors"
 	"sync"
 	"time"
 )
@@ -32,20 +31,34 @@ func NewLimiter[K comparable](r Refiller[K]) *Limiter[K] {
 	}
 }
 
+// Balance returns the number of tokens in the entity's bucket.
+// If the entity does not have a bucket yet, it returns 0.
+func (l *Limiter[K]) Balance(entity K) float64 {
+	l.mu.RLock()
+	bucket, exists := l.buckets[entity]
+	l.mu.RUnlock()
+
+	if !exists {
+		return 0
+	}
+	return bucket.Tokens
+}
+
 // Allow returns true if the entity can afford the cost, false otherwise.
 // If the cost is affordable, it is deducted from the entity's bucket.
+// It panics if the cost is negative.
 //
 // If the entity does not have a bucket yet, one is created via [Refiller.NewBucket].
 // Before checking affordability, [Refiller.Refill] is called to replenish tokens.
 //
 // Use Allow to decide whether to process a request. To punish an entity after
 // detecting abuse, use [Limiter.Penalize] instead.
-func (l *Limiter[K]) Allow(entity K, cost float64) (bool, error) {
+func (l *Limiter[K]) Allow(entity K, cost float64) bool {
 	if cost < 0 {
-		return false, errors.New("limiter.Allow: cost must be non-negative")
+		panic("limiter.Allow: cost must be non-negative")
 	}
 	if cost == 0 {
-		return true, nil
+		return true
 	}
 
 	l.mu.RLock()
@@ -67,20 +80,18 @@ func (l *Limiter[K]) Allow(entity K, cost float64) (bool, error) {
 	bucket.mu.Lock()
 	defer bucket.mu.Unlock()
 
-	if err := l.refiller.Refill(entity, bucket); err != nil {
-		return false, err
-	}
-
+	l.refiller.Refill(entity, bucket)
 	if bucket.Tokens < cost {
-		return false, nil
+		return false
 	}
 	bucket.Tokens -= cost
-	return true, nil
+	return true
 }
 
 // Penalize unconditionally deducts a cost from the entity's bucket.
 // Unlike [Limiter.Allow], no refill is applied and the deduction always occurs,
 // even if the resulting token balance becomes negative.
+// It panics if the cost is negative.
 //
 // If the entity does not have a bucket yet, one is created via [Refiller.NewBucket],
 // then the penalty is applied. This allows punishing entities detected through
@@ -88,12 +99,29 @@ func (l *Limiter[K]) Allow(entity K, cost float64) (bool, error) {
 //
 // Use Penalize to punish an entity after detecting abuse. To check whether a
 // request should be allowed, use [Limiter.Allow] instead.
-func (l *Limiter[K]) Penalize(entity K, cost float64) error {
+func (l *Limiter[K]) Penalize(entity K, cost float64) {
 	if cost < 0 {
-		return errors.New("limiter.Penalize: cost must be non-negative")
+		panic("limiter.Penalize: cost must be non-negative")
 	}
-	if cost == 0 {
-		return nil
+	l.add(entity, -cost)
+}
+
+// Reward unconditionally adds a number of tokens to the entity's bucket.
+// It panics if the reward is negative.
+//
+// Use Reward to reward an entity after detecting good behaviour. To check whether a
+// request should be allowed, use [Limiter.Allow] instead.
+func (l *Limiter[K]) Reward(entity K, reward float64) {
+	if reward < 0 {
+		panic("limiter.Reward: reward must be non-negative")
+	}
+	l.add(entity, reward)
+}
+
+// Add unconditionally adds or deducts a number of tokens to the entity's bucket.
+func (l *Limiter[K]) add(entity K, tokens float64) {
+	if tokens == 0 {
+		return
 	}
 
 	l.mu.RLock()
@@ -101,9 +129,8 @@ func (l *Limiter[K]) Penalize(entity K, cost float64) error {
 	l.mu.RUnlock()
 
 	if !exists {
-		// We don't consider penalizing an unknown entity as an error, because the abuse could
-		// have happened elsewhere, without the limiter ever seeing the entity before.
-		// So we create a new bucket for the entity, and then we proceed to penalize.
+		// We don't consider adding tokens to an unknown entity as an error,
+		// because the decision could have been made elsewhere. E.g. an external system detecting abuse.
 		l.mu.Lock()
 		bucket, exists = l.buckets[entity]
 		if !exists {
@@ -114,7 +141,6 @@ func (l *Limiter[K]) Penalize(entity K, cost float64) error {
 	}
 
 	bucket.mu.Lock()
-	bucket.Tokens -= cost
+	bucket.Tokens += tokens
 	bucket.mu.Unlock()
-	return nil
 }

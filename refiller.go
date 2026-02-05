@@ -12,8 +12,23 @@ type Refiller[K comparable] interface {
 
 	// Refill updates the entity's bucket.
 	// Before calling Refill, the [Limiter] will have already acquired the lock on the bucket.
-	Refill(entity K, bucket *Bucket) error
+	Refill(entity K, bucket *Bucket)
 }
+
+// NoRefill is a Refiller that does not refill the bucket after being created.
+// It is useful for cases where the bucket is not supposed to be refilled.
+type NoRefill[K comparable] struct {
+	InitialTokens float64
+}
+
+func (r NoRefill[K]) NewBucket(_ K) *Bucket {
+	return &Bucket{
+		Tokens:     r.InitialTokens,
+		LastRefill: time.Now(),
+	}
+}
+
+func (r NoRefill[K]) Refill(_ K, _ *Bucket) {}
 
 // FlatRefiller applies the same refill policy to every bucket.
 // Every `Interval`, it refills `TokensPerInterval` without exceeding the `MaxTokens`.
@@ -31,17 +46,15 @@ func (r FlatRefiller[K]) NewBucket(_ K) *Bucket {
 	}
 }
 
-func (r FlatRefiller[K]) Refill(_ K, b *Bucket) error {
+func (r FlatRefiller[K]) Refill(_ K, b *Bucket) {
 	if r.Interval <= 0 {
-		return nil
+		return
 	}
-
 	refills := time.Since(b.LastRefill) / r.Interval
 	if refills == 0 {
-		return nil
+		return
 	}
 
 	b.Tokens = min(r.MaxTokens, b.Tokens+float64(refills)*r.TokensPerInterval)
 	b.LastRefill = b.LastRefill.Add(refills * r.Interval)
-	return nil
 }

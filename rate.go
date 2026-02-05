@@ -31,6 +31,13 @@ func NewLimiter[K comparable](r Refiller[K]) *Limiter[K] {
 	}
 }
 
+// Len returns the number of entities tracked by the limiter.
+func (l *Limiter[K]) Len() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.buckets)
+}
+
 // Balance returns the number of tokens in the entity's bucket.
 // If the entity does not have a bucket yet, it returns 0.
 func (l *Limiter[K]) Balance(entity K) float64 {

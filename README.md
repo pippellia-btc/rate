@@ -43,12 +43,7 @@ func main() {
 
     limiter := rate.NewLimiter(refiller)
 
-    allowed, err := limiter.Allow("user-123", 1)
-    if err != nil {
-        panic(err)
-    }
-
-    if allowed {
+    if limiter.Allow("user-123", 1) {
         fmt.Println("Request allowed")
     } else {
         fmt.Println("Rate limited")
@@ -71,7 +66,7 @@ type Refiller[K comparable] interface {
 
 	// Refill updates the entity's bucket.
 	// Before calling Refill, the [Limiter] will have already acquired the lock on the bucket.
-	Refill(entity K, bucket *Bucket) error
+	Refill(entity K, bucket *Bucket)
 }
 ```
 
@@ -93,10 +88,10 @@ func (r TieredRefiller) NewBucket(userID string) *rate.Bucket {
     }
 }
 
-func (r TieredRefiller) Refill(userID string, b *rate.Bucket) error {
+func (r TieredRefiller) Refill(userID string, b *rate.Bucket) {
     elapsed := time.Since(b.LastRefill)
     if elapsed < time.Second {
-        return nil
+        return
     }
 
     refillRate := 10.0 // 10 tokens/sec
@@ -106,6 +101,5 @@ func (r TieredRefiller) Refill(userID string, b *rate.Bucket) error {
 
     b.Tokens = min(1000, b.Tokens + elapsed.Seconds()*refillRate)
     b.LastRefill = time.Now()
-    return nil
 }
 ```

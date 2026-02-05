@@ -17,23 +17,11 @@ type Limiter[K comparable] struct {
 	refiller Refiller[K]
 }
 
+// Bucket is a stateful token bucket for an entity.
 type Bucket struct {
 	mu         sync.Mutex
 	Tokens     float64
 	LastRefill time.Time
-}
-
-// Refiller encapsulates the behaviour of the refill policy of the limiter.
-// Users of this package can use custom refill policies by implementing this interface.
-//
-// For an example, see the [FlatRefiller] type.
-type Refiller[K comparable] interface {
-	// NewBucket creates a fully initialized Bucket object for a new entity.
-	NewBucket(entity K) *Bucket
-
-	// Refill updates the entity's bucket.
-	// Before calling Refill, the [Limiter] will have already acquired the lock on the bucket.
-	Refill(entity K, bucket *Bucket) error
 }
 
 // NewLimiter creates a new limiter with the refill policy encoded in the [Refiller].
@@ -44,16 +32,17 @@ func NewLimiter[K comparable](r Refiller[K]) *Limiter[K] {
 	}
 }
 
-// Reject returns true if the entity cannot pay the cost, false if it can.
-func (l *Limiter[K]) Reject(entity K, cost float64) (bool, error) {
-	allow, err := l.Allow(entity, cost)
-	return !allow, err
-}
-
-// Allow returns true if the entity can pay the cost, false if it cannot.
+// Allow returns true if the entity can afford the cost, false otherwise.
+// If the cost is affordable, it is deducted from the entity's bucket.
+//
+// If the entity does not have a bucket yet, one is created via [Refiller.NewBucket].
+// Before checking affordability, [Refiller.Refill] is called to replenish tokens.
+//
+// Use Allow to decide whether to process a request. To punish an entity after
+// detecting abuse, use [Limiter.Penalize] instead.
 func (l *Limiter[K]) Allow(entity K, cost float64) (bool, error) {
 	if cost < 0 {
-		return false, errors.New("cost must be non-negative")
+		return false, errors.New("limiter.Allow: cost must be non-negative")
 	}
 	if cost == 0 {
 		return true, nil
@@ -89,33 +78,43 @@ func (l *Limiter[K]) Allow(entity K, cost float64) (bool, error) {
 	return true, nil
 }
 
-// FlatRefiller applies the same refill policy to every bucket.
-// Every `Interval`, it refills `TokensPerInterval` without exceeding the `MaxTokens`.
-type FlatRefiller[K comparable] struct {
-	InitialTokens     float64
-	MaxTokens         float64
-	TokensPerInterval float64
-	Interval          time.Duration
-}
-
-func (r FlatRefiller[K]) NewBucket(_ K) *Bucket {
-	return &Bucket{
-		Tokens:     r.InitialTokens,
-		LastRefill: time.Now(),
+// Penalize unconditionally deducts a cost from the entity's bucket.
+// Unlike [Limiter.Allow], no refill is applied and the deduction always occurs,
+// even if the resulting token balance becomes negative.
+//
+// If the entity does not have a bucket yet, one is created via [Refiller.NewBucket],
+// then the penalty is applied. This allows punishing entities detected through
+// external systems that may not have interacted with this limiter before.
+//
+// Use Penalize to punish an entity after detecting abuse. To check whether a
+// request should be allowed, use [Limiter.Allow] instead.
+func (l *Limiter[K]) Penalize(entity K, cost float64) error {
+	if cost < 0 {
+		return errors.New("limiter.Penalize: cost must be non-negative")
 	}
-}
-
-func (r FlatRefiller[K]) Refill(_ K, b *Bucket) error {
-	if r.Interval <= 0 {
+	if cost == 0 {
 		return nil
 	}
 
-	refills := time.Since(b.LastRefill) / r.Interval
-	if refills == 0 {
-		return nil
+	l.mu.RLock()
+	bucket, exists := l.buckets[entity]
+	l.mu.RUnlock()
+
+	if !exists {
+		// We don't consider penalizing an unknown entity as an error, because the abuse could
+		// have happened elsewhere, without the limiter ever seeing the entity before.
+		// So we create a new bucket for the entity, and then we proceed to penalize.
+		l.mu.Lock()
+		bucket, exists = l.buckets[entity]
+		if !exists {
+			bucket = l.refiller.NewBucket(entity)
+			l.buckets[entity] = bucket
+		}
+		l.mu.Unlock()
 	}
 
-	b.Tokens = min(r.MaxTokens, b.Tokens+float64(refills)*r.TokensPerInterval)
-	b.LastRefill = b.LastRefill.Add(refills * r.Interval)
+	bucket.mu.Lock()
+	bucket.Tokens -= cost
+	bucket.mu.Unlock()
 	return nil
 }

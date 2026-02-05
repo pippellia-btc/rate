@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestReject(t *testing.T) {
+func TestAllow(t *testing.T) {
 	refiller := FlatRefiller[string]{
 		InitialTokens:     100,
 		MaxTokens:         100,
@@ -15,22 +15,80 @@ func TestReject(t *testing.T) {
 
 	limiter := NewLimiter[string](refiller)
 	entity := "lewis"
-	accepted := 0
+	allowed := 0
 
 	for {
-		reject, err := limiter.Reject(entity, 1)
+		ok, err := limiter.Allow(entity, 1)
 		if err != nil {
-			t.Fatalf("failed to reject: %v", err)
+			t.Fatalf("failed to allow: %v", err)
 		}
 
-		if reject {
+		if !ok {
 			break
 		}
-		accepted++
+		allowed++
 	}
 
-	if accepted != 100 {
-		t.Fatalf("lewis should have been accepted exactly 100 times, got %d", accepted)
+	if allowed != 100 {
+		t.Fatalf("lewis should have been allowed exactly 100 times, got %d", allowed)
+	}
+}
+
+func TestPenalize(t *testing.T) {
+	refiller := FlatRefiller[string]{
+		InitialTokens:     100,
+		MaxTokens:         100,
+		TokensPerInterval: 0,
+	}
+
+	limiter := NewLimiter[string](refiller)
+	entity := "lewis"
+
+	// Penalize the entity by 150 tokens (more than initial)
+	if err := limiter.Penalize(entity, 150); err != nil {
+		t.Fatalf("failed to penalize: %v", err)
+	}
+
+	// Entity should now be at -50 tokens, so Allow should fail
+	ok, err := limiter.Allow(entity, 1)
+	if err != nil {
+		t.Fatalf("failed to allow: %v", err)
+	}
+	if ok {
+		t.Fatalf("lewis should have been rejected after being penalized")
+	}
+}
+
+func TestPenalizeUnknownEntity(t *testing.T) {
+	refiller := FlatRefiller[string]{
+		InitialTokens:     100,
+		MaxTokens:         100,
+		TokensPerInterval: 0,
+	}
+
+	limiter := NewLimiter[string](refiller)
+	entity := "unknown"
+
+	// Penalize an entity that has never been seen before
+	if err := limiter.Penalize(entity, 50); err != nil {
+		t.Fatalf("failed to penalize unknown entity: %v", err)
+	}
+
+	// Entity should have a bucket now, with 100 - 50 = 50 tokens
+	allowed := 0
+	for {
+		ok, err := limiter.Allow(entity, 1)
+		if err != nil {
+			t.Fatalf("failed to allow: %v", err)
+		}
+		if !ok {
+			break
+		}
+		allowed++
+	}
+
+	if allowed != 50 {
+		t.Fatalf("unknown should have been allowed exactly 50 times after penalty, got %d", allowed)
 	}
 }
 
@@ -52,54 +110,10 @@ func TestConcurrency(t *testing.T) {
 	for range 10_000 {
 		go func() {
 			defer wg.Done()
-			if _, err := limiter.Reject(entity, 1); err != nil {
-				t.Errorf("failed to reject: %v", err)
+			if _, err := limiter.Allow(entity, 1); err != nil {
+				t.Errorf("failed to allow: %v", err)
 			}
 		}()
 	}
 	wg.Wait()
-}
-
-func TestFlatRefill(t *testing.T) {
-	refiller := FlatRefiller[string]{
-		MaxTokens:         100,
-		TokensPerInterval: 10,
-		Interval:          time.Hour,
-	}
-
-	tests := []struct {
-		name     string
-		bucket   *Bucket
-		expected *Bucket
-	}{
-		{
-			name:     "no refill (too soon)",
-			bucket:   &Bucket{Tokens: 10, LastRefill: time.Now()},
-			expected: &Bucket{Tokens: 10, LastRefill: time.Now()},
-		},
-		{
-			name:     "2 refills",
-			bucket:   &Bucket{Tokens: 10, LastRefill: time.Now().Add(-2 * time.Hour)},
-			expected: &Bucket{Tokens: 30, LastRefill: time.Now()},
-		},
-		{
-			name:     "full refill",
-			bucket:   &Bucket{Tokens: 10, LastRefill: time.Now().Add(-24 * time.Hour)},
-			expected: &Bucket{Tokens: 100, LastRefill: time.Now()},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			refiller.Refill("", test.bucket)
-
-			if test.bucket.Tokens != test.expected.Tokens {
-				t.Fatalf("expected tokens %v, got %v", test.expected.Tokens, test.bucket.Tokens)
-			}
-
-			if test.expected.LastRefill.Sub(test.bucket.LastRefill) > time.Millisecond {
-				t.Fatalf("expected last refill %v, got %v", test.expected.LastRefill, test.bucket.LastRefill)
-			}
-		})
-	}
 }

@@ -51,6 +51,25 @@ func main() {
 }
 ```
 
+### Penalize and Reward
+
+You can adjust an entity's token balance based on external signals, without going through the normal `Allow` flow:
+
+```go
+// Penalize deducts tokens unconditionally, even going negative.
+// Useful when an external system detects abuse (e.g., fraud detection, CAPTCHA failure).
+limiter.Penalize("user-123", 50)
+
+// Reward adds tokens unconditionally.
+// Useful for good behavior (e.g., completing a CAPTCHA, verified account).
+limiter.Reward("user-123", 20)
+```
+
+Unlike `Allow`, these methods:
+- Do not trigger a refill before modifying the balance
+- Can push the balance negative (`Penalize`) or above the normal max (`Reward`)
+- Work even if the entity doesn't have a bucket yet (one is created automatically)
+
 ### Custom Refiller
 
 Implement the `Refiller` interface for custom rate limiting logic:

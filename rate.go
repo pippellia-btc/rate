@@ -119,6 +119,10 @@ func (l *Limiter[K]) Penalize(entity K, cost float64) {
 // Reward unconditionally adds a number of tokens to the entity's bucket.
 // It panics if the reward is negative.
 //
+// If the entity does not have a bucket yet, one is created via [Refiller.NewBucket],
+// then the reward is applied. This allows rewarding entities detected through
+// external systems that may not have interacted with this limiter before.
+//
 // Use Reward to reward an entity after detecting good behaviour. To check whether a
 // request should be allowed, use [Limiter.Allow] instead.
 func (l *Limiter[K]) Reward(entity K, reward float64) {

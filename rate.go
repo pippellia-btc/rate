@@ -41,6 +41,9 @@ func (l *Limiter[K]) Balance(entity K) float64 {
 	if !exists {
 		return 0
 	}
+
+	bucket.mu.Lock()
+	defer bucket.mu.Unlock()
 	return bucket.Tokens
 }
 
